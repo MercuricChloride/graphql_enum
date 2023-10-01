@@ -127,6 +127,11 @@ pub enum GraphQlType {
         derived_from: bool,
         internal_type: Box<GraphQlType>,
     },
+    // for relations to another entity, the value here will always be the id of the related entity, which is a string
+    Relation {
+        required: bool,
+        derived_from: bool,
+    },
 }
 
 impl GraphQlType {
@@ -163,14 +168,19 @@ impl GraphQlType {
                 derived_from,
                 internal_type: internal_type.unwrap(),
             },
-            _ => panic!("Unknown GraphQl type {}", type_name),
+            _ => GraphQlType::Relation {
+                required,
+                derived_from,
+            },
         }
     }
 
     pub fn rust_type(&self) -> Ident {
         match self {
             GraphQlType::Id => format_ident!("String"),
-            GraphQlType::String { .. } => {
+            GraphQlType::String { .. }
+            | GraphQlType::BigInt { .. }
+            | GraphQlType::Relation { .. } => {
                 format_ident!("String")
             }
             GraphQlType::Bytes { .. } => {
@@ -178,9 +188,6 @@ impl GraphQlType {
             }
             GraphQlType::Boolean { .. } => {
                 format_ident!("bool")
-            }
-            GraphQlType::BigInt { .. } => {
-                format_ident!("String")
             }
             GraphQlType::Int { .. } => {
                 format_ident!("i32")
@@ -235,6 +242,19 @@ fn field(input: &str) -> IResult<&str, Field> {
     )(input.trim())
 }
 
+fn has_interface(input: &str) -> IResult<&str, &str> {
+    map(
+        tuple((
+            multispace0,
+            tag("implements"),
+            multispace1,
+            alpha1,
+            multispace0,
+        )),
+        |(_, _, _, interface, _)| interface,
+    )(input.trim())
+}
+
 fn graph_ql_type_name(input: &str) -> IResult<&str, String> {
     map(
         tuple((
@@ -243,16 +263,17 @@ fn graph_ql_type_name(input: &str) -> IResult<&str, String> {
             multispace1,
             alpha1,
             multispace0,
+            opt(has_interface),
             tag("@entity"),
             multispace0,
             char('{'),
         )),
-        |(_, _, _, name, _, _, _, _)| name.to_string(),
+        |(_, _, _, name, _, _, _, _, _)| name.to_string(),
     )(input.trim())
 }
 
 fn field_name(input: &str) -> IResult<&str, &str> {
-    map(alpha1::<&str, _>, |name| name)(input.trim())
+    take_until(":")(input.trim())
 }
 
 fn field_type(input: &str) -> IResult<&str, GraphQlType> {
@@ -303,18 +324,40 @@ fn is_derived_from(input: &str) -> IResult<&str, bool> {
 #[test]
 fn test_type_def() {
     let input = r#"
-type SimpleType @entity {
-    id: ID!
-    name: String!
-    bytes: Bytes!
-    boolean: Boolean!
-    bigInt: BigInt!
-    int: Int!
-    array: [String!]!
-}"#;
+type MarketPlace implements IHasLoans @entity {
+  id: ID!
+  marketplaceId: BigInt!
+
+  owner: Bytes
+  feeRecipient: Bytes
+  metadataURI: String
+  isMarketOpen: Boolean!
+  paymentDefaultDuration: BigInt!
+  paymentCycleDuration: BigInt!
+  paymentCycleType: String!
+  paymentType: String!
+  bidExpirationTime: BigInt!
+  borrowerAttestationRequired: Boolean!
+  lenderAttestationRequired: Boolean!
+  marketplaceFeePercent: BigInt!
+
+  loans: LoanStatusCount! @derivedFrom(field: "_market")
+  tokenVolumes: [TokenVolume!]! @derivedFrom(field: "market")
+
+  _durationTotal: BigInt!
+  durationAverage: BigInt!
+
+  totalNumberOfLenders: BigInt!
+  lenders: [Lender!]! @derivedFrom(field: "marketplace")
+
+  borrowers: [Borrower!]! @derivedFrom(field: "marketplace")
+
+  commitments: [Commitment!]! @derivedFrom(field: "marketplace")
+}
+"#;
 
     let type_def = parse_graphql_type(input).unwrap();
 
-    assert_eq!(type_def.name, "SimpleType");
-    assert_eq!(type_def.fields.len(), 7);
+    assert_eq!(type_def.name, "MarketPlace");
+    assert_eq!(type_def.fields.len(), 22);
 }
