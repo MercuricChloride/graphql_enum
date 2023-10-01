@@ -7,10 +7,13 @@ use nom::{
     sequence::{preceded, terminated, tuple},
     IResult,
 };
-use proc_macro2::Ident;
+use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
+use quote::quote;
 
 use anyhow::Error;
+
+use crate::helpers_from_graphql;
 
 /// A graphql type definition
 #[derive(Debug, Clone)]
@@ -33,6 +36,10 @@ impl Field {
 
     pub fn field_type(&self) -> &GraphQlType {
         &self.field_type
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn is_id(&self) -> bool {
@@ -78,8 +85,22 @@ impl Field {
             _ => false,
         }
     }
-    pub fn rust_type(&self) -> Ident {
-        self.field_type.rust_type()
+
+    pub fn rust_type(&self) -> TokenStream {
+        match &self.field_type {
+            GraphQlType::Array { internal_type, .. } => {
+                let internal_type = format_ident!("{}", internal_type.rust_type());
+                quote! (
+                    Vec<#internal_type>
+                )
+            }
+            _ => {
+                let type_ident = format_ident!("{}", self.field_type.rust_type());
+                quote! (
+                    #type_ident
+                )
+            }
+        }
     }
 }
 
@@ -175,25 +196,26 @@ impl GraphQlType {
         }
     }
 
-    pub fn rust_type(&self) -> Ident {
+    pub fn rust_type(&self) -> String {
         match self {
-            GraphQlType::Id => format_ident!("String"),
-            GraphQlType::String { .. }
+            GraphQlType::Id
+            | GraphQlType::String { .. }
             | GraphQlType::BigInt { .. }
             | GraphQlType::Relation { .. } => {
-                format_ident!("String")
+                format!("String")
             }
             GraphQlType::Bytes { .. } => {
-                format_ident!("Vec<u8>")
+                format!("Vec<u8>")
             }
             GraphQlType::Boolean { .. } => {
-                format_ident!("bool")
+                format!("bool")
             }
             GraphQlType::Int { .. } => {
-                format_ident!("i32")
+                format!("i32")
             }
             GraphQlType::Array { internal_type, .. } => {
-                format_ident!("Vec<{}>", internal_type.rust_type())
+                let internal_type = internal_type.rust_type();
+                format!("Vec<{}>", internal_type)
             }
         }
     }
@@ -219,7 +241,7 @@ pub fn parse_graphql_type(input: &str) -> Result<TypeDefinition, Error> {
     match result {
         Ok((remaining, type_definition)) => {
             if remaining.len() > 0 {
-                let message = stringify!("Couldn't fully parse graphql type definition. Go yell at @blind_nabler to fix this!: {}", remaining);
+                let message = format!("Couldn't fully parse graphql type definition. Go yell at @blind_nabler to fix this!: {}", remaining);
                 return Err(Error::msg(message));
             }
             Ok(type_definition)
@@ -360,4 +382,30 @@ type MarketPlace implements IHasLoans @entity {
 
     assert_eq!(type_def.name, "MarketPlace");
     assert_eq!(type_def.fields.len(), 22);
+
+    let input = r#"
+
+type Protocol implements IHasLoans @entity {
+  id: ID!
+
+  loans: LoanStatusCount! @derivedFrom(field: "_protocol")
+  tokenVolumes: [String!]! @derivedFrom(field: "protocol")
+
+  activeCommitments: [Commitment!]!
+  activeRewards: [RewardAllocation!]!
+
+  _durationTotal: BigInt!
+  durationAverage: BigInt!
+}
+"#;
+
+    let type_def = parse_graphql_type(input).unwrap();
+    println!("Type name: {}", type_def.name);
+    for field in &type_def.fields {
+        println!("Field name: {}", field.name);
+        println!("Field type: {:?}", field.field_type);
+    }
+
+    assert_eq!(type_def.name, "Protocol");
+    assert_eq!(type_def.fields.len(), 7);
 }

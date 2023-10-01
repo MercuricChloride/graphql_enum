@@ -89,7 +89,7 @@ fn generate_create_params(fields: &Vec<Field>) -> proc_macro2::TokenStream {
 }
 
 fn generate_set_statement(field: &Field) -> proc_macro2::TokenStream {
-    let key = stringify!(&field.name());
+    let key = format!("{}", &field.name());
     let value = format_ident!("r#{}", &field.snake_case_name());
     match field.field_type() {
         GraphQlType::BigInt { .. } => {
