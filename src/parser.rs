@@ -13,8 +13,6 @@ use quote::quote;
 
 use anyhow::Error;
 
-use crate::helpers_from_graphql;
-
 /// A graphql type definition
 #[derive(Debug, Clone)]
 pub struct TypeDefinition {
@@ -57,6 +55,7 @@ impl Field {
             | GraphQlType::Boolean { required: true, .. }
             | GraphQlType::BigInt { required: true, .. }
             | GraphQlType::Int { required: true, .. }
+            | GraphQlType::Relation { required: true, .. }
             | GraphQlType::Array { required: true, .. } => true,
             _ => false,
         }
@@ -79,6 +78,9 @@ impl Field {
             | GraphQlType::Int {
                 derived_from: true, ..
             }
+            | GraphQlType::Relation {
+                derived_from: true, ..
+            }
             | GraphQlType::Array {
                 derived_from: true, ..
             } => true,
@@ -91,13 +93,19 @@ impl Field {
             GraphQlType::Array { internal_type, .. } => {
                 let internal_type = format_ident!("{}", internal_type.rust_type());
                 quote! (
-                    Vec<#internal_type>
+                    &Vec<#internal_type>
                 )
+            }
+            GraphQlType::Bytes { .. } => {
+                quote!(&Vec<u8>)
+            }
+            GraphQlType::Boolean { .. } => {
+                quote!(bool)
             }
             _ => {
                 let type_ident = format_ident!("{}", self.field_type.rust_type());
                 quote! (
-                    #type_ident
+                    &#type_ident
                 )
             }
         }
@@ -375,6 +383,19 @@ type MarketPlace implements IHasLoans @entity {
   borrowers: [Borrower!]! @derivedFrom(field: "marketplace")
 
   commitments: [Commitment!]! @derivedFrom(field: "marketplace")
+}
+
+type Protocol implements IHasLoans @entity {
+  id: ID!
+
+  loans: LoanStatusCount! @derivedFrom(field: "_protocol")
+  tokenVolumes: [TokenVolume!]! @derivedFrom(field: "protocol")
+
+  activeCommitments: [Commitment!]!
+  activeRewards: [RewardAllocation!]!
+
+  _durationTotal: BigInt!
+  durationAverage: BigInt!
 }
 "#;
 
